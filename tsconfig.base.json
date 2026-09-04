@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowSyntheticDefaultImports": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@doviz/shared": ["packages/shared/src/index.ts"],
+      "@doviz/shared/*": ["packages/shared/src/*"],
+      "@doviz/i18n": ["packages/i18n/src/index.ts"],
+      "@doviz/i18n/*": ["packages/i18n/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "dist", "build"]
+}

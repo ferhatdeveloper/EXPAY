@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Döviz Bürosu</title>
+    <script>
+      // Global error overlay - bundle hatalarını göster
+      (function () {
+        var show = function (title, body) {
+          var old = document.getElementById('__err_overlay');
+          if (old) old.remove();
+          var div = document.createElement('div');
+          div.id = '__err_overlay';
+          div.style.cssText =
+            'position:fixed;inset:0;background:#1a0000;color:#ff8888;font-family:monospace;padding:24px;z-index:99999;overflow:auto;white-space:pre-wrap;font-size:14px;line-height:1.4;';
+          div.innerHTML =
+            '<h1 style="color:#ff4444;font-size:28px;">⛔ ' +
+            title +
+            '</h1><pre>' +
+            body +
+            '</pre>';
+          (document.body || document.documentElement).appendChild(div);
+        };
+        window.addEventListener('error', function (e) {
+          var stack = (e.error && e.error.stack) || (e.filename + ':' + e.lineno + ':' + e.colno);
+          show('JS HATASI: ' + e.message, stack);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var reason = e.reason;
+          var msg = (reason && reason.message) || (typeof reason === 'string' ? reason : JSON.stringify(reason));
+          show('Promise Hatası: ' + msg, (reason && reason.stack) || '');
+        });
+        // İlk 3 saniye React mount olmadıysa uyar
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (root && root.children.length === 0) {
+            show(
+              'React hiç mount olmadı (3sn)',
+              'API baseURL yanlış veya bundle hatalı olabilir. Console loglarına bakın.',
+            );
+          }
+        }, 3000);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

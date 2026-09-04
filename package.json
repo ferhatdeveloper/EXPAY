@@ -1,0 +1,33 @@
+{
+  "name": "doviz-burosu",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Doviz burosu yonetim sistemi (multi-branch, multi-language)",
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @doviz/api dev",
+    "dev:web": "pnpm --filter @doviz/web dev",
+    "build:api": "pnpm --filter @doviz/api build",
+    "build:web": "pnpm --filter @doviz/web build",
+    "build": "pnpm -r --parallel build",
+    "lint": "eslint \"{apps,packages}/*/src/**/*.{ts,tsx}\"",
+    "format": "prettier --write \"{apps,packages}/*/src/**/*.{ts,tsx,css,json}\"",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @doviz/api db:migrate",
+    "db:seed": "pnpm --filter @doviz/api db:seed",
+    "db:studio": "pnpm --filter @doviz/api db:studio",
+    "docker:up": "docker compose -f docker/docker-compose.yml up -d",
+    "docker:down": "docker compose -f docker/docker-compose.yml down",
+    "docker:logs": "docker compose -f docker/docker-compose.yml logs -f"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

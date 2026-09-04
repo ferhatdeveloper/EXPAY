@@ -1,0 +1,679 @@
+// Prisma schema for Doviz Burosu uygulamasi
+// Datasource: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============== AUTH & IDENTITY ==============
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// Ülke kodu — TR vergi/BSMV/KDV ve IQ vergi/CBK profilleri için (R-07).
+enum Country {
+  TR
+  IQ
+}
+
+model Branch {
+  id          String   @id @default(uuid())
+  code        String   @unique @db.VarChar(20)
+  name        String   @db.VarChar(150)
+  address     String?  @db.VarChar(255)
+  phone       String?  @db.VarChar(30)
+  active      Boolean  @default(true)
+  country     Country  @default(TR)
+  timezone    String?  @db.VarChar(64)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  users        UserBranchAssignment[]
+  cashDrawers  CashDrawer[]
+  cashAccounts CashAccount[]
+  customers    Customer[]
+  vezneReceipts VezneReceipt[]
+  vezneTransfers VezneTransfer[]
+  vezneBanknoteCounts VezneBanknoteCount[]
+  cashTransactions CashTransaction[]
+  cashMovements CashMovement[]
+  customerMovements CustomerMovement[]
+  accountingVouchers AccountingVoucher[]
+  exchangeRates ExchangeRate[]
+  rateDeviations RateDeviationLog[]
+  dayEnds DayEnd[]
+  auditLogs ChangeAuditLog[]
+  fiscalYear BranchFiscalYear[]
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  code        String   @unique @db.VarChar(40)
+  name        String   @db.VarChar(120)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(false)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  permissions RolePermission[]
+  users       User[]
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique @db.VarChar(80)
+  module      String   @db.VarChar(40)
+  description String?  @db.VarChar(255)
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model User {
+  id           String     @id @default(uuid())
+  username     String     @unique @db.VarChar(50)
+  fullName     String     @db.VarChar(150)
+  email        String?    @unique @db.VarChar(150)
+  passwordHash String     @db.VarChar(255)
+  status       UserStatus @default(ACTIVE)
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id])
+  language     String     @default("tr") @db.VarChar(8)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+  lastLoginAt  DateTime?
+
+  branches       UserBranchAssignment[]
+  refreshTokens  RefreshToken[]
+  vezneReceipts  VezneReceipt[]
+  vezneTransfers VezneTransfer[]
+  banknoteCounts VezneBanknoteCount[]
+  cashMovements  CashMovement[]
+  customerMovements CustomerMovement[]
+  accountingVouchers AccountingVoucher[]
+  rateDeviations RateDeviationLog[]
+  dayEnds        DayEnd[]
+  auditLogs      ChangeAuditLog[]
+}
+
+model UserBranchAssignment {
+  userId   String
+  branchId String
+  isDefault Boolean @default(false)
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch   Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userId, branchId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique @db.VarChar(255)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  ip        String?  @db.VarChar(45)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============== CURRENCY & RATES ==============
+
+model Currency {
+  code          String   @id @db.VarChar(8)
+  name          String   @db.VarChar(80)
+  symbol        String   @db.VarChar(8)
+  decimalDigits Int      @default(2)
+  buySpread     Decimal  @default(0) @db.Decimal(10, 4)
+  sellSpread    Decimal  @default(0) @db.Decimal(10, 4)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  rates         ExchangeRate[]
+  vezneReceipts VezneReceipt[]
+  vezneTransfers VezneTransfer[]
+  vezneBanknoteCounts VezneBanknoteCount[]
+  cashTransactions CashTransaction[]
+  cashMovements CashMovement[]
+  customerMovements CustomerMovement[]
+  accountingLines AccountingVoucherLine[]
+  rateDeviations RateDeviationLog[]
+  taxProfiles  TaxProfile[]
+}
+
+/// Vergi profili — country+currencyCode kombinasyonu unique (R-07).
+/// TR: BSMV (binde) + KDV (yüzde) kar/zarar ayrıştırması. IQ: CBK (yüzde).
+/// `minAmount` -> bu tutarın altındaki işlemler muaf (`exempted=true` ise hep muaf).
+model TaxProfile {
+  id           String   @id @default(uuid())
+  country      Country
+  currencyCode String
+  bsmvRate     Decimal  @default(0) @db.Decimal(10, 4)
+  kdvRate      Decimal  @default(0) @db.Decimal(10, 4)
+  cbkRate      Decimal  @default(0) @db.Decimal(10, 4)
+  minAmount    Decimal  @default(0) @db.Decimal(20, 4)
+  exempted     Boolean  @default(false)
+  description  String?  @db.VarChar(255)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@unique([country, currencyCode])
+  @@index([country, currencyCode, active])
+}
+
+enum RateType {
+  RAW_FREE
+  FREE
+  CLOSING
+}
+
+/// R-13: Kur kaynağı etiketi — kim/nasıl girdi.
+enum RateSource {
+  RAW_FREE
+  FREE
+  CLOSING
+  MARKET
+  MANUAL
+}
+
+model ExchangeRate {
+  id           String   @id @default(uuid())
+  branchId     String
+  currencyCode String
+  rateType     RateType
+  buyRate      Decimal  @db.Decimal(20, 8)
+  sellRate     Decimal  @db.Decimal(20, 8)
+  rawBuyRate   Decimal? @db.Decimal(20, 8)
+  rawSellRate  Decimal? @db.Decimal(20, 8)
+  effectiveAt  DateTime @default(now())
+  note         String?  @db.VarChar(255)
+  createdById  String?
+  enteredBy    String?
+  enteredAt    DateTime?
+  source       RateSource @default(MANUAL)
+  isLocked     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@index([branchId, currencyCode, rateType, effectiveAt])
+  @@index([branchId, isLocked])
+}
+
+model RateDeviationLog {
+  id            String   @id @default(uuid())
+  branchId      String
+  currencyCode  String
+  rateType      RateType
+  previousRate  Decimal  @db.Decimal(20, 8)
+  newRate       Decimal  @db.Decimal(20, 8)
+  deviation     Decimal  @db.Decimal(20, 8)
+  deviationPct  Decimal  @db.Decimal(10, 4)
+  direction     String   @db.VarChar(10)
+  userId        String
+  ip            String?  @db.VarChar(45)
+  note          String?  @db.VarChar(255)
+  createdAt     DateTime @default(now())
+
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  currency Currency @relation(fields: [currencyCode], references: [code])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([branchId, currencyCode, createdAt])
+}
+
+// ============== VEZNE ==============
+
+enum CashDrawerStatus {
+  OPEN
+  CLOSED
+}
+
+model CashDrawer {
+  id            String           @id @default(uuid())
+  branchId      String
+  code          String           @db.VarChar(20)
+  name          String           @db.VarChar(120)
+  status        CashDrawerStatus @default(CLOSED)
+  openedAt      DateTime?
+  closedAt      DateTime?
+  openingBalance Decimal         @default(0) @db.Decimal(20, 4)
+  closingBalance Decimal         @default(0) @db.Decimal(20, 4)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  deletedAt     DateTime?
+
+  branch          Branch @relation(fields: [branchId], references: [id])
+  transfersOut    VezneTransfer[] @relation("TransferFrom")
+  transfersIn     VezneTransfer[] @relation("TransferTo")
+  receipts        VezneReceipt[]
+  banknoteCounts  VezneBanknoteCount[]
+
+  @@unique([branchId, code])
+}
+
+enum ReceiptType {
+  BUY
+  SELL
+  ADJUSTMENT
+}
+
+enum ReceiptStatus {
+  DRAFT
+  POSTED
+  VOIDED
+  CORRECTED
+}
+
+/// One row per (branch, businessDate). Atomically incremented inside the
+/// receipt-creation transaction to guarantee unique receipt numbers (R-15/R-01).
+model VezneReceiptSequence {
+  id        String   @id @default(uuid())
+  branchId  String
+  date      DateTime @db.Date
+  lastNumber Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, date])
+  @@index([branchId, date])
+}
+
+model VezneReceipt {
+  id            String        @id @default(uuid())
+  branchId      String
+  cashDrawerId  String
+  userId        String
+  receiptNo     String        @db.VarChar(40)
+  receiptType   ReceiptType
+  currencyCode  String
+  foreignAmount Decimal       @db.Decimal(20, 4)
+  rate          Decimal       @db.Decimal(20, 8)
+  tryAmount     Decimal       @db.Decimal(20, 4)
+  customerId    String?
+  customerName  String?       @db.VarChar(150)
+  description   String?       @db.VarChar(255)
+  status        ReceiptStatus @default(POSTED)
+  originalId    String?
+  correctionReason String?   @db.VarChar(255)
+  voidReason    String?       @db.VarChar(255)
+  postedAt      DateTime?
+  receiptDate   DateTime      @default(now())
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+
+  branch      Branch      @relation(fields: [branchId], references: [id])
+  cashDrawer  CashDrawer  @relation(fields: [cashDrawerId], references: [id])
+  user        User        @relation(fields: [userId], references: [id])
+  currency    Currency    @relation(fields: [currencyCode], references: [code])
+  customer    Customer?   @relation(fields: [customerId], references: [id])
+  original    VezneReceipt? @relation("ReceiptCorrections", fields: [originalId], references: [id])
+  corrections VezneReceipt[] @relation("ReceiptCorrections")
+
+  @@index([branchId, receiptDate])
+  @@index([userId, receiptDate])
+  @@index([branchId, receiptNo])
+}
+
+enum TransferStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+model VezneTransfer {
+  id            String         @id @default(uuid())
+  branchId      String
+  fromDrawerId  String
+  toDrawerId    String?
+  currencyCode  String
+  amount        Decimal        @db.Decimal(20, 4)
+  status        TransferStatus @default(COMPLETED)
+  description   String?        @db.VarChar(255)
+  userId        String
+  transferDate  DateTime       @default(now())
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+
+  branch     Branch     @relation(fields: [branchId], references: [id])
+  fromDrawer CashDrawer @relation("TransferFrom", fields: [fromDrawerId], references: [id])
+  toDrawer   CashDrawer? @relation("TransferTo", fields: [toDrawerId], references: [id])
+  currency   Currency   @relation(fields: [currencyCode], references: [code])
+  user       User       @relation(fields: [userId], references: [id])
+}
+
+model VezneBanknoteCount {
+  id            String   @id @default(uuid())
+  branchId      String
+  cashDrawerId  String
+  userId        String
+  currencyCode  String
+  totalAmount   Decimal  @db.Decimal(20, 4)
+  breakdown     Json
+  note          String?  @db.VarChar(255)
+  countDate     DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  branch     Branch     @relation(fields: [branchId], references: [id])
+  cashDrawer CashDrawer @relation(fields: [cashDrawerId], references: [id])
+  currency   Currency   @relation(fields: [currencyCode], references: [code])
+  user       User       @relation(fields: [userId], references: [id])
+}
+
+// ============== KASA ==============
+
+model CashAccount {
+  id           String   @id @default(uuid())
+  branchId     String
+  code         String   @db.VarChar(20)
+  name         String   @db.VarChar(150)
+  currencyCode String   @default("TRY")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  branch       Branch            @relation(fields: [branchId], references: [id])
+  transactions CashTransaction[]
+  movements    CashMovement[]
+
+  @@unique([branchId, code])
+}
+
+model CashTransaction {
+  id           String   @id @default(uuid())
+  branchId     String
+  cashAccountId String
+  currencyCode String
+  debit        Decimal  @default(0) @db.Decimal(20, 4)
+  credit       Decimal  @default(0) @db.Decimal(20, 4)
+  description  String?  @db.VarChar(255)
+  refType      String?  @db.VarChar(40)
+  refId        String?
+  txnDate      DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  branch      Branch      @relation(fields: [branchId], references: [id])
+  cashAccount CashAccount @relation(fields: [cashAccountId], references: [id])
+  currency    Currency    @relation(fields: [currencyCode], references: [code])
+
+  @@index([branchId, cashAccountId, txnDate])
+}
+
+enum CashMovementDirection {
+  IN
+  OUT
+}
+
+model CashMovement {
+  id           String   @id @default(uuid())
+  branchId     String
+  cashAccountId String
+  userId       String
+  currencyCode String
+  direction    CashMovementDirection
+  amount       Decimal  @db.Decimal(20, 4)
+  description  String?  @db.VarChar(255)
+  movementDate DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  branch      Branch      @relation(fields: [branchId], references: [id])
+  cashAccount CashAccount @relation(fields: [cashAccountId], references: [id])
+  user        User        @relation(fields: [userId], references: [id])
+  currency    Currency    @relation(fields: [currencyCode], references: [code])
+}
+
+// ============== CUSTOMER (CARI) ==============
+
+model Customer {
+  id          String   @id @default(uuid())
+  branchId    String
+  code        String?  @db.VarChar(20)
+  fullName    String   @db.VarChar(150)
+  phone       String?  @db.VarChar(30)
+  email       String?  @db.VarChar(150)
+  taxNumber   String?  @db.VarChar(30)
+  address     String?  @db.VarChar(255)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  branch     Branch              @relation(fields: [branchId], references: [id])
+  movements  CustomerMovement[]
+  receipts   VezneReceipt[]
+
+  @@unique([branchId, code])
+}
+
+enum CustomerMovementDirection {
+  DEBIT
+  CREDIT
+}
+
+model CustomerMovement {
+  id            String   @id @default(uuid())
+  branchId      String
+  customerId    String
+  userId        String
+  currencyCode  String
+  direction     CustomerMovementDirection
+  amount        Decimal  @db.Decimal(20, 4)
+  foreignAmount Decimal  @default(0) @db.Decimal(20, 4)
+  foreignCurrency String? @db.VarChar(8)
+  rate          Decimal? @db.Decimal(20, 8)
+  refType       String?  @db.VarChar(40)
+  refId         String?
+  description   String?  @db.VarChar(255)
+  movementDate  DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@index([branchId, customerId, movementDate])
+}
+
+// ============== ACCOUNTING ==============
+
+model AccountingAccount {
+  id           String   @id @default(uuid())
+  code         String   @unique @db.VarChar(20)
+  name         String   @db.VarChar(150)
+  parentCode   String?  @db.VarChar(20)
+  type         String   @db.VarChar(20)
+  currencyCode String   @default("TRY")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  voucherLines AccountingVoucherLine[]
+
+  @@index([code])
+}
+
+enum VoucherType {
+  OPENING
+  CLOSING
+  NORMAL
+  CORRECTION
+}
+
+model AccountingVoucher {
+  id          String      @id @default(uuid())
+  branchId    String
+  voucherNo   String      @db.VarChar(40)
+  voucherType VoucherType
+  voucherDate DateTime
+  description String      @db.VarChar(255)
+  totalDebit  Decimal     @db.Decimal(20, 4)
+  totalCredit Decimal     @db.Decimal(20, 4)
+  userId      String
+  postedAt    DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+
+  branch Branch                @relation(fields: [branchId], references: [id])
+  user   User                  @relation(fields: [userId], references: [id])
+  lines  AccountingVoucherLine[]
+
+  @@unique([branchId, voucherNo])
+}
+
+model AccountingVoucherLine {
+  id            String  @id @default(uuid())
+  voucherId     String
+  accountId     String
+  currencyCode  String  @default("TRY")
+  debit         Decimal @default(0) @db.Decimal(20, 4)
+  credit        Decimal @default(0) @db.Decimal(20, 4)
+  description   String? @db.VarChar(255)
+
+  voucher  AccountingVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  account  AccountingAccount @relation(fields: [accountId], references: [id])
+  currency Currency          @relation(fields: [currencyCode], references: [code])
+}
+
+model FiscalYear {
+  id        String   @id @default(uuid())
+  year      Int      @unique
+  startDate DateTime
+  endDate   DateTime
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branches BranchFiscalYear[]
+}
+
+model BranchFiscalYear {
+  branchId     String
+  fiscalYearId String
+  isCurrent    Boolean @default(false)
+  branch       Branch     @relation(fields: [branchId], references: [id])
+  fiscalYear   FiscalYear @relation(fields: [fiscalYearId], references: [id])
+
+  @@id([branchId, fiscalYearId])
+}
+
+// ============== DAY END ==============
+
+enum DayEndStatus {
+  OPEN
+  CLOSING
+  CLOSED
+}
+
+model DayEnd {
+  id          String      @id @default(uuid())
+  branchId    String
+  userId      String
+  businessDate DateTime   @db.Date
+  status      DayEndStatus @default(OPEN)
+  closedAt    DateTime?
+  notes       String?     @db.VarChar(255)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([branchId, businessDate])
+}
+
+// ============== AUDIT & TECHNICAL ==============
+
+model ChangeAuditLog {
+  id          String   @id @default(uuid())
+  entity      String   @db.VarChar(80)
+  entityId    String
+  action      String   @db.VarChar(20)
+  changes     Json
+  reason      String?  @db.VarChar(500)
+  userId      String?
+  branchId    String?
+  ip          String?  @db.VarChar(45)
+  createdAt   DateTime @default(now())
+
+  user   User?   @relation(fields: [userId], references: [id])
+  branch Branch? @relation(fields: [branchId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+  @@index([branchId, entity, createdAt])
+}
+
+model BackupRecord {
+  id          String   @id @default(uuid())
+  filename    String   @db.VarChar(255)
+  size        BigInt
+  storagePath String   @db.VarChar(500)
+  status      String   @db.VarChar(20)
+  note        String?  @db.VarChar(255)
+  createdById String?
+  createdAt   DateTime @default(now())
+}
+
+model PhoneDefinition {
+  id        String   @id @default(uuid())
+  label     String   @db.VarChar(80)
+  number    String   @db.VarChar(40)
+  branchId  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SystemSetting {
+  key       String   @id @db.VarChar(80)
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model JobDefinition {
+  id          String   @id @default(uuid())
+  code        String   @unique @db.VarChar(40)
+  name        String   @db.VarChar(120)
+  description String?  @db.VarChar(255)
+  cron        String?  @db.VarChar(40)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
