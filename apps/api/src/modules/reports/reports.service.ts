@@ -5,8 +5,19 @@ interface RangeParams {
   branchId?: string;
   startDate?: Date;
   endDate?: Date;
+  // Yeni kısa isimler — `from` ve `to` takma adları.
+  from?: Date;
+  to?: Date;
   userId?: string;
   currencyCode?: string;
+}
+
+/** RangeParams içinden etkin start/end çıkar — `from`/`to` takma adlarını da kabul eder. */
+function pickRange(p: RangeParams): { startDate?: Date; endDate?: Date } {
+  return {
+    startDate: p.startDate ?? p.from,
+    endDate: p.endDate ?? p.to,
+  };
 }
 
 @Injectable()
@@ -25,14 +36,15 @@ export class ReportsService {
 
   // ===== Fiş Listeleme =====
   receiptList(p: RangeParams) {
+    const { startDate, endDate } = pickRange(p);
     return this.prisma.vezneReceipt.findMany({
       where: {
         deletedAt: null,
         ...(p.branchId ? { branchId: p.branchId } : {}),
         ...(p.userId ? { userId: p.userId } : {}),
         ...(p.currencyCode ? { currencyCode: p.currencyCode } : {}),
-        ...(p.startDate || p.endDate
-          ? { receiptDate: { ...(p.startDate ? { gte: p.startDate } : {}), ...(p.endDate ? { lte: p.endDate } : {}) } }
+        ...(startDate || endDate
+          ? { receiptDate: { ...(startDate ? { gte: startDate } : {}), ...(endDate ? { lte: endDate } : {}) } }
           : {}),
       },
       include: { user: { select: { id: true, username: true, fullName: true } }, currency: true, cashDrawer: true },
@@ -63,23 +75,31 @@ export class ReportsService {
     const branchId = this.requireBranchId(p.branchId, 'profitability');
     const receipts = await this.receiptList({ ...p, branchId });
     const closing = await this.closingRatesByBranchCurrency(branchId);
-    const by: Record<string, { buyCount: number; sellCount: number; totalBuyTry: number; totalSellTry: number; profit: number }> = {};
+    const by: Record<string, { buyCount: number; sellCount: number; totalBuyTry: number; totalSellTry: number; profit: number; grossProfitTry: number }> = {};
     for (const r of receipts) {
       const key = r.currencyCode;
-      if (!by[key]) by[key] = { buyCount: 0, sellCount: 0, totalBuyTry: 0, totalSellTry: 0, profit: 0 };
+      if (!by[key]) by[key] = { buyCount: 0, sellCount: 0, totalBuyTry: 0, totalSellTry: 0, profit: 0, grossProfitTry: 0 };
       if (r.receiptType === 'BUY') {
         by[key].buyCount += 1;
         by[key].totalBuyTry += Number(r.tryAmount);
         const closeSell = closing[key]?.sellRate ?? Number(r.rate);
         by[key].profit += (closeSell - Number(r.rate)) * Number(r.foreignAmount);
+        by[key].grossProfitTry +=
+          (closeSell - Number(r.rate)) * Number(r.foreignAmount);
       } else if (r.receiptType === 'SELL') {
         by[key].sellCount += 1;
         by[key].totalSellTry += Number(r.tryAmount);
         const closeBuy = closing[key]?.buyRate ?? Number(r.rate);
         by[key].profit += (Number(r.rate) - closeBuy) * Number(r.foreignAmount);
+        by[key].grossProfitTry +=
+          (Number(r.rate) - closeBuy) * Number(r.foreignAmount);
       }
     }
-    return Object.entries(by).map(([currency, v]) => ({ currency, ...v }));
+    return Object.entries(by).map(([currency, v]) => ({
+      currency,
+      ...v,
+      grossProfitTry: v.grossProfitTry,
+    }));
   }
 
   // ===== Personel Değerlendirme =====
@@ -98,13 +118,14 @@ export class ReportsService {
 
   // ===== Kasa Defteri =====
   cashLedger(p: RangeParams & { cashAccountId?: string }) {
+    const { startDate, endDate } = pickRange(p);
     return this.prisma.cashTransaction.findMany({
       where: {
         deletedAt: null,
         ...(p.branchId ? { branchId: p.branchId } : {}),
         ...(p.cashAccountId ? { cashAccountId: p.cashAccountId } : {}),
-        ...(p.startDate || p.endDate
-          ? { txnDate: { ...(p.startDate ? { gte: p.startDate } : {}), ...(p.endDate ? { lte: p.endDate } : {}) } }
+        ...(startDate || endDate
+          ? { txnDate: { ...(startDate ? { gte: startDate } : {}), ...(endDate ? { lte: endDate } : {}) } }
           : {}),
       },
       include: { cashAccount: true, currency: true },

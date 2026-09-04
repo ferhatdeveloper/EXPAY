@@ -29,12 +29,32 @@ export class TaxProfileService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Ülke+currency bazlı vergi profili yükle. Yoksa default 0 oranlı döner
-   * (muafiyet uygulanır).
+   * Ülke+currency bazlı vergi profili yükle.
+   *
+   * `country` açıkça verilmemişse `branchId` üzerinden branch.country çıkarılır.
+   * Hiçbir şekilde ülke türetilemiyorsa null döner (default profile YOK — caller
+   * vergi yazmamalı).
    */
-  async getProfile(country: TaxCountry, currencyCode: string) {
+  async getProfile(input: {
+    branchId?: string;
+    country?: TaxCountry | string;
+    currencyCode: string;
+  }) {
+    let country = input.country as TaxCountry | string | undefined;
+    if (!country && input.branchId) {
+      const branch = await this.prisma.branch.findUnique({
+        where: { id: input.branchId },
+      });
+      country = branch?.country;
+    }
+    if (!country) {
+      // fallback: ülke türetilemedi → profil uygulanamaz
+      return null;
+    }
     const profile = await this.prisma.taxProfile.findUnique({
-      where: { country_currencyCode: { country, currencyCode } },
+      where: {
+        country_currencyCode: { country: country as TaxCountry, currencyCode: input.currencyCode },
+      },
     });
     if (profile) {
       return {
@@ -48,9 +68,10 @@ export class TaxProfileService {
         active: profile.active,
       };
     }
+    // Profile satırı yoksa default muaf profile dön
     return {
-      country,
-      currencyCode,
+      country: country as TaxCountry,
+      currencyCode: input.currencyCode,
       bsmvRate: 0,
       kdvRate: 0,
       cbkRate: 0,
@@ -91,8 +112,20 @@ export class TaxProfileService {
       voucherId: string | null;
     }>
   > {
-    const country = (receipt.taxCountry as TaxCountry) || 'TR';
-    const profile = await this.getProfile(country, receipt.currencyCode);
+    // Ülke: input.taxCountry varsa onu kullan, yoksa branch.country çıkar.
+    let country = receipt.taxCountry as TaxCountry | undefined;
+    if (!country) {
+      const branch = await tx.branch.findUnique({
+        where: { id: receipt.branchId },
+        select: { country: true },
+      });
+      country = (branch?.country as TaxCountry | undefined) ?? undefined;
+    }
+    const profile = await this.getProfile({
+      branchId: receipt.branchId,
+      country,
+      currencyCode: receipt.currencyCode,
+    });
     const out: Array<{
       taxType: 'BSMV' | 'KDV' | 'CBK';
       rate: number;
@@ -102,13 +135,9 @@ export class TaxProfileService {
       voucherId: string | null;
     }> = [];
 
-    if (
-      receipt.taxExempted ||
-      profile.exempted ||
-      !profile.active ||
-      profile.minAmount === 0
-    ) {
-      // Profile olmadığı veya exempted ise hiçbir şey yapma
+    // Profile türetilemediyse vergi yazma
+    if (!profile) {
+      return out;
     }
 
     const tryAmount = Number(receipt.tryAmount);
@@ -161,7 +190,8 @@ export class TaxProfileService {
           taxType: 'CBK',
           rate: profile.cbkRate,
           amount: tax,
-          accountCode: '360',
+          // IQ CBK için ülkeye özgü muhasebe hesabı
+          accountCode: '361',
           description: `CBK (${profile.cbkRate} %)`,
           voucherId: await this.postTaxLine(
             tx,
@@ -170,6 +200,7 @@ export class TaxProfileService {
             'CBK',
             tax,
             `CBK (${profile.cbkRate} %) — fiş ${receipt.id}`,
+            '361',
           ),
         });
       }
@@ -179,8 +210,8 @@ export class TaxProfileService {
   }
 
   /**
-   * Vergi satırı `360 ÖDE.VERGİ` hesabına voucherLine olarak yazılır.
-   * Karşılık: 100 KASA alacak (TRY kasa çıkışı).
+   * Vergi satırı `360 ÖDE.VERGİ` (TR) veya `361` (IQ CBK) hesabına voucherLine olarak
+   * yazılır. Karşılık: 100 KASA alacak (TRY kasa çıkışı).
    */
   private async postTaxLine(
     tx: Tx,
@@ -189,14 +220,15 @@ export class TaxProfileService {
     taxType: 'BSMV' | 'KDV' | 'CBK',
     amount: number,
     description: string,
+    accountCode: string = '360',
   ): Promise<string | null> {
-    const acc360 = await tx.accountingAccount.findUnique({
-      where: { code: '360' },
+    const accTax = await tx.accountingAccount.findUnique({
+      where: { code: accountCode },
     });
     const acc100 = await tx.accountingAccount.findUnique({
       where: { code: '100' },
     });
-    if (!acc360 || !acc100) return null;
+    if (!accTax || !acc100) return null;
 
     const today = new Date();
     const ymd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
@@ -218,9 +250,9 @@ export class TaxProfileService {
         postedAt: new Date(),
         lines: {
           create: [
-            // 360 ÖDE.VERGİ borç (peşin ödeme)
+            // vergi hesabı borç (peşin ödeme)
             {
-              accountId: acc360.id,
+              accountId: accTax.id,
               currencyCode: 'TRY',
               debit: amount,
               credit: 0,
