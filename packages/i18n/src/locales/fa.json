@@ -58,12 +58,14 @@
     "cari": "عملیات مشتری",
     "sapma": "تغییرات و انحرافات",
     "muhasebe": "حسابداری",
-    "teknik": "فنی"
+    "teknik": "فنی",
+    "admin": "مدیریت"
   },
   "vezne": {
     "title": "عملیات صندوق‌دار",
     "receiptCreate": "ثبت رسید خرید/فروش",
     "receiptCorrect": "اصلاح رسید",
+    "receiptList": "فهرست رسیدها",
     "transferCreate": "ثبت انتقال",
     "transferCorrect": "اصلاح انتقال",
     "bulkTransfer": "انتقال دسته‌ای به صندوق اصلی",
@@ -77,11 +79,12 @@
   },
   "rate": {
     "title": "نرخ ارز",
-    "rawFree": "ثبت نرخ آزاد خام",
-    "free": "ثبت نرخ آزاد",
-    "old": "نرخ‌های قدیمی",
-    "closing": "نرخ‌های بسته شدن",
-    "definition": "تعاریف نرخ"
+    "rawFree": "نرخ آزاد خام",
+    "free": "نرخ آزاد",
+    "old": "نرخ قدیم",
+    "closing": "نرخ پایانی",
+    "definition": "تعاریف نرخ",
+    "deviation": "انحراف نرخ"
   },
   "yonetim": {
     "title": "عملیات مدیر",
@@ -93,7 +96,9 @@
     "receiptList": "فهرست رسیدها",
     "dailyDetail": "جزئیات روزانه رسید",
     "profitability": "گزارش سودآوری",
-    "personnel": "ارزیابی پرسنل"
+    "personnel": "ارزیابی پرسنل",
+    "cashLedger": "دفتر صندوق",
+    "changes": "تغییرات"
   },
   "kasa": {
     "title": "عملیات صندوق",
@@ -134,7 +139,14 @@
     "opening": "ایجاد سند افتتاحیه",
     "closing": "ایجاد سند اختتامیه",
     "fiscalYear": "انتخاب سال مالی",
+    "dayEnd": "پایان روز",
     "reports": "دفاتر و گزارش‌ها"
+  },
+  "admin": {
+    "title": "مدیریت",
+    "users": "کاربران",
+    "roles": "نقش‌ها",
+    "branches": "شعبه‌ها"
   },
   "teknik": {
     "title": "فنی",

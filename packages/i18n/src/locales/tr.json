@@ -58,12 +58,14 @@
     "cari": "Cari Islemler",
     "sapma": "Degisiklik ve Kur Sapmalari",
     "muhasebe": "Muhasebe Islemleri",
-    "teknik": "Teknik Islemler"
+    "teknik": "Teknik Islemler",
+    "admin": "Yonetim"
   },
   "vezne": {
     "title": "Vezne Islemleri",
     "receiptCreate": "Alis/Satis Fis Girisi",
     "receiptCorrect": "Alis/Satis Fis Duzeltme",
+    "receiptList": "Fis Listesi",
     "transferCreate": "Transfer Hareket Kaydi",
     "transferCorrect": "Transfer Hareket Duzeltme",
     "bulkTransfer": "Ana Kasaya Toplu Transfer",
@@ -81,11 +83,12 @@
   },
   "rate": {
     "title": "Kur Islemleri",
-    "rawFree": "Ham Serbest Kur Girisi",
-    "free": "Serbest Kur Girisi",
-    "old": "Eski Kurlar",
-    "closing": "Kapanis Kurlari",
-    "definition": "Kur Tanimlari"
+    "rawFree": "Ham Serbest Kur",
+    "free": "Serbest Kur",
+    "old": "Eski Kur",
+    "closing": "Kapanis Kuru",
+    "definition": "Kur Tanimlari",
+    "deviation": "Kur Sapmasi"
   },
   "yonetim": {
     "title": "Yonetici Islemleri",
@@ -97,7 +100,9 @@
     "receiptList": "Fis Listeleme",
     "dailyDetail": "Gunluk Fis Detay Raporu",
     "profitability": "Karlilik Raporu",
-    "personnel": "Personel Degerlendirme"
+    "personnel": "Personel Degerlendirme",
+    "cashLedger": "Kasa Defteri",
+    "changes": "Degisiklikler"
   },
   "kasa": {
     "title": "Kasa Islemleri",
@@ -138,7 +143,14 @@
     "opening": "Acilis Fisi Olusturma",
     "closing": "Kapanis Fisi Olusturma",
     "fiscalYear": "Hesap Yili Secimi",
+    "dayEnd": "Gun Sonu",
     "reports": "Defterler ve Raporlar"
+  },
+  "admin": {
+    "title": "Yonetim",
+    "users": "Kullanicilar",
+    "roles": "Roller",
+    "branches": "Subeler"
   },
   "teknik": {
     "title": "Teknik Islemler",

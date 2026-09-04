@@ -58,12 +58,14 @@
     "cari": "Karûbarên Mîştêran",
     "sapma": "Guhertin û Cudahî",
     "muhasebe": "Muhasebe",
-    "teknik": "Teknîkî"
+    "teknik": "Teknîkî",
+    "admin": "Birêvebirî"
   },
   "vezne": {
     "title": "Karûbarên Gendîmê",
     "receiptCreate": "Tomarkirina Makbuzê",
     "receiptCorrect": "Sererastkirina Makbuzê",
+    "receiptList": "Lîsteya Fîşan",
     "transferCreate": "Tomarkirina Veguhastinê",
     "transferCorrect": "Sererastkirina Veguhastinê",
     "bulkTransfer": "Veguhastina Giştî",
@@ -77,11 +79,12 @@
   },
   "rate": {
     "title": "Rêjeyên Danûstandinê",
-    "rawFree": "Rêjeya Xwe-azad a Xam",
-    "free": "Rêjeya Xwe-azad",
-    "old": "Rêjeyên Kevn",
-    "closing": "Rêjeyên Girtinê",
-    "definition": "Danasîna Rêjeyan"
+    "rawFree": "Rêjeya Azad a Xam",
+    "free": "Rêjeya Azad",
+    "old": "Rêjeya Kevn",
+    "closing": "Rêjeya Girtinê",
+    "definition": "Definitionsê Rêjeyê",
+    "deviation": "Deviasyona Rêjeyê"
   },
   "yonetim": {
     "title": "Karûbarên Birêvebir",
@@ -93,7 +96,9 @@
     "receiptList": "Lîsteya Makbuzan",
     "dailyDetail": "Hûragahîya Rojane",
     "profitability": "Raporê Qezencê",
-    "personnel": "Nirxandina Karkeran"
+    "personnel": "Nirxandina Karkeran",
+    "cashLedger": "Deftera Qasê",
+    "changes": "Guhertin"
   },
   "kasa": {
     "title": "Karûbarên Qutiyê",
@@ -134,7 +139,14 @@
     "opening": "Çêkirina Makbuza Vekirinê",
     "closing": "Çêkirina Makbuza Girtinê",
     "fiscalYear": "Hilbijartina Sala Aborî",
+    "dayEnd": "Dawîya Rojê",
     "reports": "Defter û Rapor"
+  },
+  "admin": {
+    "title": "Birêvebirî",
+    "users": "Bikarhêner",
+    "roles": "Rol",
+    "branches": "Şax"
   },
   "teknik": {
     "title": "Teknîkî",

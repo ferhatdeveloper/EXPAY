@@ -58,12 +58,14 @@
     "cari": "Customer Operations",
     "sapma": "Changes & Rate Deviations",
     "muhasebe": "Accounting",
-    "teknik": "Technical"
+    "teknik": "Technical",
+    "admin": "Administration"
   },
   "vezne": {
     "title": "Cashier Operations",
     "receiptCreate": "Buy/Sell Receipt Entry",
     "receiptCorrect": "Buy/Sell Receipt Correction",
+    "receiptList": "Receipt List",
     "transferCreate": "Transfer Entry",
     "transferCorrect": "Transfer Correction",
     "bulkTransfer": "Bulk Transfer to Main Cash",
@@ -77,11 +79,12 @@
   },
   "rate": {
     "title": "Exchange Rates",
-    "rawFree": "Raw Free Rate Entry",
-    "free": "Free Rate Entry",
-    "old": "Old Rates",
-    "closing": "Closing Rates",
-    "definition": "Rate Definitions"
+    "rawFree": "Raw Free Rate",
+    "free": "Free Rate",
+    "old": "Old Rate",
+    "closing": "Closing Rate",
+    "definition": "Rate Definitions",
+    "deviation": "Rate Deviation"
   },
   "yonetim": {
     "title": "Manager Operations",
@@ -93,7 +96,9 @@
     "receiptList": "Receipt List",
     "dailyDetail": "Daily Receipt Detail",
     "profitability": "Profitability Report",
-    "personnel": "Personnel Evaluation"
+    "personnel": "Personnel Evaluation",
+    "cashLedger": "Cash Ledger",
+    "changes": "Changes"
   },
   "kasa": {
     "title": "Cash Operations",
@@ -134,7 +139,14 @@
     "opening": "Create Opening Voucher",
     "closing": "Create Closing Voucher",
     "fiscalYear": "Fiscal Year Selection",
+    "dayEnd": "Day End",
     "reports": "Books & Reports"
+  },
+  "admin": {
+    "title": "Administration",
+    "users": "Users",
+    "roles": "Roles",
+    "branches": "Branches"
   },
   "teknik": {
     "title": "Technical",

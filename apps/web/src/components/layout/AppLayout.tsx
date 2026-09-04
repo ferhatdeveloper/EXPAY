@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useEffect } from 'react';
 import { cn } from '@/lib/cn';
@@ -26,7 +26,7 @@ const NAV: Array<{
     ],
   },
   {
-    key: 'kur',
+    key: 'rate',
     items: [
       { key: 'rawFree', to: '/rate/raw-free', permission: 'rate.rawFree' },
       { key: 'free', to: '/rate/free', permission: 'rate.free' },
@@ -102,12 +102,36 @@ export function AppLayout() {
   const { sidebarOpen, toggleSidebar, theme, toggleTheme } = useUiStore();
 
   useEffect(() => {
+    // Apply theme to html element on every change
     document.documentElement.classList.toggle('dark', theme === 'dark');
+    // Persist theme to localStorage so it survives full reloads (incl. before zustand persist hydrates)
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {
+      /* ignore storage errors */
+    }
   }, [theme]);
 
+  // On mount, restore theme from localStorage as early as possible to avoid flash
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('theme');
+      if (stored === 'dark' || stored === 'light') {
+        document.documentElement.classList.toggle('dark', stored === 'dark');
+        if (stored !== theme) {
+          // Sync zustand state if it differs (e.g. before persist middleware hydrated)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (useUiStore as any).setState({ theme: stored });
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!user) {
-    navigate('/login');
-    return null;
+    return <Navigate to="/login" replace />;
   }
 
   return (
@@ -146,10 +170,15 @@ export function AppLayout() {
               (i) => user.roleCode === 'ADMIN' || !i.permission || user.permissions.includes(i.permission),
             );
             if (items.length === 0) return null;
+            // Use group.title from the section namespace (e.g. vezne.title) when available,
+            // fall back to nav.<key> for top-level entries that don't have a section.
+            const groupLabel =
+              t(`${group.key}.title`, { defaultValue: t(`nav.${group.key}`) }) ||
+              t(`nav.${group.key}`);
             return (
               <div key={group.key} className="space-y-1">
                 <div className="px-3 py-1 text-xs uppercase text-muted-foreground tracking-wide">
-                  {sidebarOpen ? t(`nav.${group.key}`) : ''}
+                  {sidebarOpen ? groupLabel : ''}
                 </div>
                 {items.map((it) => (
                   <NavLink
