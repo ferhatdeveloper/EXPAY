@@ -1,0 +1,42 @@
+---
+description: Bu projede tüm push ve merge islemleri her zaman main branch'e yapilir
+alwaysApply: true
+---
+
+# Git Branch Kurali — her zaman main
+
+Bu projede (EXPAY / Doviz) tum Git islemleri **her zaman `main` branch** uzerinden yapilir.
+
+## Zorunlu Kurallar
+
+1. **Push hedefi:** `git push` komutu her zaman `origin main` branch'ine yapilir. Diger branch'lere push atilmaz.
+2. **Default branch:** Yeni branch olustururken `-b main` veya `git switch -c main` kullanilir; baska branch olusturulmaz.
+3. **gh CLI:** `gh repo create` kullanildiginda `--default-branch main` (veya sonradan `gh repo edit --default-branch main`) ayarlanir.
+4. **Remote:** Tek remote olarak `origin = https://github.com/ferhatdeveloper/EXPAY.git` kullanilir.
+5. **Commit stratejisi:** Ozellik(feature)/duzeltme(fix) branch'leri gecici olarak kullanilsa bile en sonunda `main`'e merge edilir ve `main` push'lanir.
+
+## Hatali Kullanim
+
+```bash
+# YANLIS — baska branch'e push
+git push origin feature/xyz
+git push -u origin dev
+
+# YANLIS — default branch degistirmek
+gh repo edit ferhatdeveloper/EXPAY --default-branch main-legacy
+```
+
+## Dogru Kullanim
+
+```bash
+# DOGRU
+git push -u origin main
+git push origin main
+gh repo edit ferhatdeveloper/EXPAY --default-branch main  # zaten main oldugunu dogrula
+```
+
+## Notlar
+
+- Kullanici acikca farkli bir branch isteyene kadar her zaman `main` kullanilir.
+- PR acarken bile hedef branch `main` olmalidir.
+- `git status` ciktisinda aktif branch kontrol edilir; `main` degilse uyari verilir.
