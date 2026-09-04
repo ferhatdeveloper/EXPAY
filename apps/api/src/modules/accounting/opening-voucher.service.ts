@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '@doviz/shared';
-import { isFirstDayOfYearInBranch } from '../../common/utils/date.util';
+import {
+  isFirstDayOfYearInBranch,
+  getTodayInBranch,
+  getTimezone,
+} from '../../common/utils/date.util';
 
 type Tx = Omit<
   PrismaClient,
@@ -46,7 +50,9 @@ export class OpeningVoucherService {
       return null;
     }
 
-    const year = businessDate.getFullYear();
+    // R-14 fix: year'ı branch timezone'undan al (UTC kullanma)
+    const ymd = getTodayInBranch(branch).split('-'); // YYYY-MM-DD
+    const year = Number(ymd[0]);
     const yearStart = new Date(Date.UTC(year, 0, 1));
     const yearEnd = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
 

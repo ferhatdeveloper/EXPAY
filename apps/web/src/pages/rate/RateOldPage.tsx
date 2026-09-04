@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { formatDateForBranch } from '@/lib/format';
 
 interface RateRow {
   id: string;
@@ -42,7 +43,7 @@ export function RateOldPage() {
     { key: 'type', header: 'Tur', render: (r) => <Badge variant="outline">{r.rateType}</Badge> },
     { key: 'buy', header: 'Alis', render: (r) => Number(r.buyRate).toFixed(4) },
     { key: 'sell', header: 'Satis', render: (r) => Number(r.sellRate).toFixed(4) },
-    { key: 'date', header: 'Tarih', render: (r) => new Date(r.effectiveAt).toLocaleString() },
+    { key: 'date', header: 'Tarih', render: (r) => formatDateForBranch(r.effectiveAt, (useAuthStore.getState().user as any)?.branch?.country === 'IQ' ? 'IQ' : 'TR') },
     { key: 'note', header: 'Not', render: (r) => r.note ?? '-' },
   ];
 

@@ -154,31 +154,91 @@ function formatYmdInTimezone(d: Date, tz: string): string {
 }
 
 /**
- * "YYYY-MM-DD" + timezone için local midnight -> UTC Date.
- * Türkiye/Bağdat'ta TZ ile UTC aynı olduğundan şu an basit yaklaşım yeterli.
- * Gelecekte TZ offset farklı olursa: (local as UTC midnight) - offset'i hesapla.
+ * R-14 fix: Bir timezone'un belirli bir tarih için UTC'den kaç dakika
+ * saptığını hesaplar. (örn. Europe/Istanbul için yaz/kış fark etmeksizin 180).
+ *
+ * Implementasyon: aynı UTC instant'i iki ayrı timezone'da formatlarız;
+ * aradaki saat farkı ofseti verir. `Intl.DateTimeFormat` DST ve tüm
+ * tarihsel anomalileri doğru hesaplar.
  */
-function parseLocalDateAtMidnight(ymd: string, tz: string): Date {
-  // Önce date'i UTC midnight olarak parse et
-  const utcGuess = new Date(`${ymd}T00:00:00.000Z`);
-  // Bu UTC anının TZ'deki saatini hesapla
-  const localAtMidnight = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    hour: '2-digit',
-    minute: '2-digit',
+function getTzOffsetMinutes(date: Date, tz: string): number {
+  const utcParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
     hour12: false,
-  }).formatToParts(utcGuess);
-  const tzHour = Number(
-    localAtMidnight.find((p) => p.type === 'hour')?.value ?? '0',
+  }).formatToParts(date);
+  const tzParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const asNum = (parts: Intl.DateTimeFormatPart[], type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? '0');
+  // UTC için hour "24" gelebilir (Safari), 0..23 aralığına indir
+  const norm = (h: number): number => (h === 24 ? 0 : h);
+  const utcMs = Date.UTC(
+    asNum(utcParts, 'year'),
+    asNum(utcParts, 'month') - 1,
+    asNum(utcParts, 'day'),
+    norm(asNum(utcParts, 'hour')),
+    asNum(utcParts, 'minute'),
+    asNum(utcParts, 'second'),
   );
-  const tzMinute = Number(
-    localAtMidnight.find((p) => p.type === 'minute')?.value ?? '0',
+  // TZ tarafı: "Wall-clock time" kullanıyoruz; bu yüzden kendi Date.UTC'sine
+  // değil, aynı Y-M-D h:m:s değerlerini direkt UTC instant'i gibi yazıp
+  // gerçek UTC ile farkını ölçüyoruz.
+  const tzAsUtcMs = Date.UTC(
+    asNum(tzParts, 'year'),
+    asNum(tzParts, 'month') - 1,
+    asNum(tzParts, 'day'),
+    norm(asNum(tzParts, 'hour')),
+    asNum(tzParts, 'minute'),
+    asNum(tzParts, 'second'),
   );
-  const offsetMs = (tzHour * 60 + tzMinute) * 60 * 1000;
-  // Eğer TZ ofset 3 saat ise (TR/IQ), UTC midnight -> local 03:00
-  // local midnight istiyoruz, o zaman UTC = local_midnight - offset
-  return new Date(utcGuess.getTime() - offsetMs);
+  return (tzAsUtcMs - utcMs) / 60000;
+}
+
+/**
+ * "YYYY-MM-DD" + timezone için local midnight -> UTC Date.
+ *
+ * R-14 fix (önceki hali yanlıştı — TR/IQ 21:00 sonrası bir gün geri
+ * düşüyordu). Yeni yaklaşım:
+ *   1) Local midnight'i UTC instant olarak hayal et (`YYYY-MM-DDT00:00:00Z`)
+ *   2) Bu UTC anının hedef TZ'deki wall-clock saatini ölç
+ *   3) Wall-clock 00:00 olacak şekilde offset'i (dk) çıkar
+ *   4) Sonuç = gerçek "local midnight"ı temsil eden UTC instant
+ */
+function parseLocalDateAtMidnight(ymd: string, tz: string): Date {
+  const localMidnightGuess = new Date(`${ymd}T00:00:00.000Z`);
+  const offsetMin = getTzOffsetMinutes(localMidnightGuess, tz);
+  return new Date(localMidnightGuess.getTime() - offsetMin * 60000);
+}
+
+/**
+ * Branch timezone'unda bugünün YYYY-MM-DD string'i.
+ */
+export function getTodayInBranch(
+  branch: { country?: Country | string | null; timezone?: string | null } | null | undefined,
+): string {
+  const tz = branch?.timezone || getTimezone(branch?.country);
+  return formatYmdInTimezone(new Date(), tz);
+}
+
+/**
+ * Branch timezone'unda YYYY-MM-DD compact (YYYYMMDD).
+ * Sıralı receipt no üretimi için kullanılır.
+ */
+export function formatYmd(branch: { country?: Country | string | null; timezone?: string | null } | null | undefined, date: Date = new Date()): string {
+  const tz = branch?.timezone || getTimezone(branch?.country);
+  return formatYmdInTimezone(date, tz).replace(/-/g, '');
 }

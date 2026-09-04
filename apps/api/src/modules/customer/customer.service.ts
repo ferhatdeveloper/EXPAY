@@ -1,70 +1,61 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { CreateCustomerInput, CreateCustomerMovementInput } from '@doviz/shared';
 import { AuthUser } from '@doviz/shared';
 
 @Injectable()
 export class CustomerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
-   * R-03: helper — returns SUM(direction=customer-side bakiyesi) per currency.
-   * Schema: direction='DEBIT' => customer is debited (we owe them less); CREDIT => owed more.
-   * For TRY and for foreign currency separately.
+   * R-03: helper — per-currency customer bakiyesi.
+   *
+   * İmzalı tutar yaklaşımı:
+   *  - TRY satırları: amount (imzalı) ile gruplanır.
+   *      BUY  → TRY bakiyesi + (müşteri döviz sattı, biz TRY ödedik → müşterinin alacağı arttı)
+   *      SELL → TRY bakiyesi - (müşteri döviz aldı, biz TRY aldık → müşterinin borcu arttı)
+   *  - Foreign satırlar: foreignAmount (imzalı) ile gruplanır.
+   *      BUY  → foreign bakiyesi - (müşteri döviz sattı, döviz bakiyesi azaldı)
+   *      SELL → foreign bakiyesi + (müşteri döviz aldı, döviz bakiyesi arttı)
+   *
+   * `direction` alanına güvenmek yerine `refType/refId` çiftini ya da doğrudan
+   * işaretli tutarı esas alıyoruz — tek satırda hem TRY hem foreign imzalı toplam.
    */
   private async computeBalances(customerId: string) {
-    // 1. Per-currency TRY balances (or any currency explicitly used)
-    const tryRows = await this.prisma.customerMovement.groupBy({
-      by: ['currencyCode'],
-      where: { customerId, deletedAt: null, refType: { not: 'FOREIGN' } },
-      _sum: { amount: true },
+    const movements = await this.prisma.customerMovement.groupBy({
+      by: ['customerId', 'currencyCode', 'foreignCurrency'],
+      where: { customerId, deletedAt: null },
+      _sum: { amount: true, foreignAmount: true },
     });
-    const foreignRows = await this.prisma.customerMovement.groupBy({
-      by: ['foreignCurrency'],
-      where: {
-        customerId,
-        deletedAt: null,
-        foreignCurrency: { not: null },
-      },
-      _sum: { foreignAmount: true },
-    });
-    const balances: Array<{
-      currencyCode: string;
-      balance: number;
-    }> = [];
-    for (const r of tryRows) {
-      const credits = await this.prisma.customerMovement.aggregate({
-        where: {
-          customerId,
-          deletedAt: null,
-          currencyCode: r.currencyCode,
-          direction: 'CREDIT',
-          refType: { not: 'FOREIGN' },
-        },
-        _sum: { amount: true },
-      });
-      const debits = await this.prisma.customerMovement.aggregate({
-        where: {
-          customerId,
-          deletedAt: null,
-          currencyCode: r.currencyCode,
-          direction: 'DEBIT',
-          refType: { not: 'FOREIGN' },
-        },
-        _sum: { amount: true },
-      });
-      balances.push({
-        currencyCode: r.currencyCode,
-        balance: Number(credits._sum.amount ?? 0) - Number(debits._sum.amount ?? 0),
-      });
+
+    const balancesByCurrency = new Map<string, number>();
+
+    for (const m of movements) {
+      if (m.foreignCurrency) {
+        // Foreign tarafı — doğrudan foreignAmount (imzalı)
+        const cur = m.foreignCurrency;
+        balancesByCurrency.set(
+          cur,
+          (balancesByCurrency.get(cur) ?? 0) + Number(m._sum.foreignAmount ?? 0),
+        );
+      } else {
+        // TRY tarafı — amount (imzalı)
+        const cur = m.currencyCode || 'TRY';
+        balancesByCurrency.set(
+          cur,
+          (balancesByCurrency.get(cur) ?? 0) + Number(m._sum.amount ?? 0),
+        );
+      }
     }
-    const foreignBalances = foreignRows
-      .filter((r) => r.foreignCurrency)
-      .map((r) => ({
-        currencyCode: r.foreignCurrency as string,
-        balance: Number(r._sum.foreignAmount ?? 0),
-      }));
-    return [...balances, ...foreignBalances];
+
+    return Array.from(balancesByCurrency.entries()).map(([currencyCode, balance]) => ({
+      currencyCode,
+      balance,
+    }));
   }
 
   list(branchId?: string, q?: string) {
@@ -126,13 +117,21 @@ export class CustomerService {
     return this.prisma.customer.create({ data: input as any });
   }
 
-  async update(id: string, input: Partial<CreateCustomerInput>) {
+  async update(id: string, input: Partial<CreateCustomerInput>, reason?: string) {
     await this.get(id);
+    // R-12: reason audit context'e set edilir (interceptor'da log'a yazılır)
+    if (reason) {
+      this.audit.setReason(reason);
+    }
     return this.prisma.customer.update({ where: { id }, data: input as any });
   }
 
-  async softDelete(id: string) {
+  async softDelete(id: string, reason?: string) {
     await this.get(id);
+    // R-12: reason'ı audit context'e set et
+    if (reason) {
+      this.audit.setReason(reason);
+    }
     return this.prisma.customer.update({
       where: { id },
       data: { deletedAt: new Date(), active: false },

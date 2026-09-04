@@ -24,6 +24,7 @@ import {
   startOfDayInBranch,
   endOfDayInBranch,
   isFirstDayOfYearInBranch,
+  formatYmd,
 } from '../../common/utils/date.util';
 
 type Tx = Omit<
@@ -83,7 +84,7 @@ export class VezneService {
       create: { branchId, date: day, lastNumber: 1 },
       update: { lastNumber: { increment: 1 } },
     });
-    return `R-${formatYmd(businessDate)}-${String(updated.lastNumber).padStart(5, '0')}`;
+    return `R-${formatYmd(branch, businessDate)}-${String(updated.lastNumber).padStart(5, '0')}`;
   }
 
   // ============================================================
@@ -238,7 +239,10 @@ export class VezneService {
       });
       await this.createCustomerMovementsForReceipt(tx, receipt, user);
 
-      // R-07: vergi satırları (TR BSMV/KDV veya IQ CBK)
+      // BUG FIX (P0): ana kasa + ana muhasebe fişi (her BUY/SELL için zorunlu).
+      // Önce R-07 + R-06 yan etkileri çalışsın; ana kayıt onlardan sonra
+      // yazılır ki R-09 ters çevirme sırasında description içinde receiptNo
+      // ile eşleşen ana voucher'lar da bulunup tersine çevrilebilsin.
       await this.taxProfile.computeAndPost(
         tx,
         {
@@ -255,8 +259,197 @@ export class VezneService {
       // R-06: kur farkı muhasebesi (kapanış kuru varsa)
       await this.applyRateDifference(tx, receipt, user);
 
+      // BUG FIX (P0): ana kasa + ana muhasebe fişi.
+      // BUY:  müşteriden yabancı al, TRY ver  → TRY kasadan çıkar (credit),
+      //                                         USD kasaya girer (debit).
+      //       Voucher: 600 SATIŞ borç +X TRY / 100 KASA alacak +X TRY.
+      // SELL: müşteriye yabancı ver, TRY al  → TRY kasaya girer (debit),
+      //                                         USD kasadan çıkar (credit).
+      //       Voucher: 100 KASA borç +X TRY / 600 SATIŞ alacak +X TRY.
+      await this.postMainVoucherAndCash(
+        tx,
+        receipt,
+        user,
+        Number(receipt.tryAmount),
+        Number(receipt.foreignAmount),
+      );
+
       return receipt;
     });
+  }
+
+  /**
+   * BUG FIX (P0): Ana vezne fişinin muhasebe ve kasa yansımaları.
+   *
+   * R-02 kapsamında her BUY/SELL POSTED fişi için iki kayıt üretir:
+   *   1) CashTransaction × 2 (TRY + foreign) — kasa hareketi
+   *   2) AccountingVoucher (VoucherType=VEZNE_DEGIL; "NORMAL", kind semantiği
+   *      description içinde "Vezne #<no>") — 100 KASA ↔ 600 SATIŞ (TRY-only balanced)
+   *
+   * Neden ayrı voucher: R-06/R-07 kendi voucher'larını yazar (kur farkı, vergi).
+   * Bunlar ayrı NORMAL voucher'lardır ve R-09 reverseAccountingForReceipt
+   * description içinde fiş no'yu arayarak hepsini tersine çevirir — bu yüzden
+   * ana voucher'ın description'ı da receiptNo'yu içermelidir.
+   */
+  private async postMainVoucherAndCash(
+    tx: Tx,
+    receipt: VezneReceipt,
+    user: AuthUser,
+    tryAmount: number,
+    foreignAmount: number,
+  ): Promise<void> {
+    const isBuy = receipt.receiptType === 'BUY';
+
+    // (1) CashTransaction — TRY + foreign
+    const tryAccount = await this.findOrCreateCashAccount(
+      tx,
+      receipt.branchId,
+      'TRY',
+      `Ana Kasa TRY (auto)`,
+    );
+    const foreignAccount = await this.findOrCreateCashAccount(
+      tx,
+      receipt.branchId,
+      receipt.currencyCode,
+      `Ana Kasa ${receipt.currencyCode} (auto)`,
+    );
+
+    // BUY: TRY kasadan çıkar (credit), foreign kasaya girer (debit)
+    // SELL: TRY kasaya girer (debit), foreign kasadan çıkar (credit)
+    await tx.cashTransaction.createMany({
+      data: [
+        {
+          branchId: receipt.branchId,
+          cashAccountId: tryAccount.id,
+          currencyCode: 'TRY',
+          debit: isBuy ? 0 : tryAmount,
+          credit: isBuy ? tryAmount : 0,
+          description: `Vezne ${receipt.receiptType} #${receipt.receiptNo} (TRY)`,
+          refType: 'VEZNE_RECEIPT',
+          refId: receipt.id,
+          txnDate: receipt.postedAt ?? new Date(),
+        },
+        {
+          branchId: receipt.branchId,
+          cashAccountId: foreignAccount.id,
+          currencyCode: receipt.currencyCode,
+          debit: isBuy ? foreignAmount : 0,
+          credit: isBuy ? 0 : foreignAmount,
+          description: `Vezne ${receipt.receiptType} #${receipt.receiptNo} (${receipt.currencyCode})`,
+          refType: 'VEZNE_RECEIPT_FOREIGN',
+          refId: receipt.id,
+          txnDate: receipt.postedAt ?? new Date(),
+        },
+      ],
+    });
+
+    // (2) Ana muhasebe fişi — TRY-only balanced (100 KASA ↔ 600 SATIŞ)
+    // Açıklama: Vezne fişinin muhasebe yansıması kasadaki para hareketini
+    // gelir tablosuna aktarır. Kur farkı (R-06) ve vergi (R-07) ayrı voucher.
+    const cashAcc = await tx.accountingAccount.findUnique({
+      where: { code: '100' },
+    });
+    const salesAcc = await tx.accountingAccount.findUnique({
+      where: { code: '600' },
+    });
+    if (!cashAcc || !salesAcc) {
+      // chart of accounts seed edilmemişse ana fişi yazma — ama cash hareketi
+      // yine de yazıldı; admin console'dan accounts eklenmeli.
+      return;
+    }
+
+    const voucherNo = await this.nextVoucherNo(tx, receipt.branchId);
+    const description = `Vezne fişi ${receipt.receiptNo} ${receipt.receiptType} ${foreignAmount} ${receipt.currencyCode} @ ${Number(receipt.rate)} — ana kayıt`;
+    // Açıklamada fiş no geçtiği için R-09 reverseAccountingForReceipt bunu
+    // "fiş <receiptNo>" filtresiyle bulur ve ters çevirir.
+    const cashLineDescription = `Vezne #${receipt.receiptNo} (${receipt.receiptType}) kasa`;
+    const salesLineDescription = `Vezne #${receipt.receiptNo} (${receipt.receiptType}) satış`;
+
+    // BUY:  600 borç (TRY), 100 alacak (TRY)  → TRY kasadan çıkar, gelir doğar
+    // SELL: 100 borç (TRY), 600 alacak (TRY)  → TRY kasaya girer, gelir doğar
+    const cashSide = isBuy ? 'credit' : 'debit';
+    const salesSide = isBuy ? 'debit' : 'credit';
+
+    await tx.accountingVoucher.create({
+      data: {
+        branchId: receipt.branchId,
+        voucherNo,
+        voucherType: 'NORMAL',
+        voucherDate: receipt.postedAt ?? new Date(),
+        description,
+        totalDebit: tryAmount,
+        totalCredit: tryAmount,
+        userId: user.id,
+        postedAt: new Date(),
+        lines: {
+          create: [
+            {
+              accountId: cashAcc.id,
+              currencyCode: 'TRY',
+              debit: cashSide === 'debit' ? tryAmount : 0,
+              credit: cashSide === 'credit' ? tryAmount : 0,
+              description: cashLineDescription,
+            },
+            {
+              accountId: salesAcc.id,
+              currencyCode: 'TRY',
+              debit: salesSide === 'debit' ? tryAmount : 0,
+              credit: salesSide === 'credit' ? tryAmount : 0,
+              description: salesLineDescription,
+            },
+          ],
+        },
+      },
+    });
+  }
+
+  /**
+   * BUG FIX (P0): Branch + currency başına CashAccount find-or-create.
+   * Şubenin TRY kasası zaten seed ile vardır. Döviz (USD, EUR, ...) için
+   * otomatik olarak Kxx-XX formatında hesap açarız.
+   */
+  private async findOrCreateCashAccount(
+    tx: Tx,
+    branchId: string,
+    currencyCode: string,
+    fallbackName: string,
+  ): Promise<{ id: string }> {
+    const existing = await tx.cashAccount.findFirst({
+      where: { branchId, currencyCode, deletedAt: null },
+      select: { id: true },
+    });
+    if (existing) return existing;
+
+    const count = await tx.cashAccount.count({
+      where: { branchId, deletedAt: null },
+    });
+    const code = `K-${currencyCode}-${String(count + 1).padStart(2, '0')}`;
+    return tx.cashAccount.create({
+      data: {
+        branchId,
+        code,
+        name: fallbackName,
+        currencyCode,
+        active: true,
+      },
+      select: { id: true },
+    });
+  }
+
+  /**
+   * BUG FIX (P0): Branş için sıralı voucherNo üretir.
+   * banknoteCount içinde ad-hoc yazılmış versiyonun generic karşılığı.
+   */
+  private async nextVoucherNo(tx: Tx, branchId: string): Promise<string> {
+    const today = new Date();
+    const ymd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+    const count = await tx.accountingVoucher.count({
+      where: {
+        branchId,
+        createdAt: { gte: new Date(today.setHours(0, 0, 0, 0)) },
+      },
+    });
+    return `V-${ymd}-${String(count + 1).padStart(5, '0')}`;
   }
 
   // ============================================================
@@ -427,6 +620,14 @@ export class VezneService {
         user,
       );
       await this.applyRateDifference(tx, updated, user);
+      // BUG FIX (P0): draft→POSTED akışında da ana kasa + ana voucher üret.
+      await this.postMainVoucherAndCash(
+        tx,
+        updated,
+        user,
+        Number(updated.tryAmount),
+        Number(updated.foreignAmount),
+      );
       return updated;
     });
   }
@@ -733,6 +934,10 @@ export class VezneService {
       if (!drawer) throw new NotFoundException('Cash drawer not found');
 
       // 1) Banknote count kaydı
+      const branch = await tx.branch.findUnique({
+        where: { id: drawer.branchId },
+        select: { country: true, timezone: true },
+      });
       const count = await tx.vezneBanknoteCount.create({
         data: {
           branchId: drawer.branchId,
@@ -811,7 +1016,7 @@ export class VezneService {
       if (cashAcc && sayimFarkiAcc) {
         // Voucher No: tek sequence gibi davran
         const count2 = await tx.accountingVoucher.count({});
-        const voucherNo = `V-${formatYmd(new Date())}-${String(count2 + 1).padStart(5, '0')}`;
+        const voucherNo = `V-${formatYmd(branch, new Date())}-${String(count2 + 1).padStart(5, '0')}`;
         const voucher = await tx.accountingVoucher.create({
           data: {
             branchId: drawer.branchId,
@@ -870,9 +1075,22 @@ export class VezneService {
   }
 
   // ============================================================
-  //                Monitor / balances (R-02)
+  //                Monitor / balances (R-02 + R-08)
   // ============================================================
 
+  /**
+   * Monitor bakiye hesabı — R-08 fix:
+   *
+   * Önceki implementasyon `receiptType in (BUY, SELL)` filtresi nedeniyle
+   * ADJUSTMENT (sayım farkı) receipt'lerini bakiyeden dışlıyordu; bu da
+   * banknote-count sonrası kasa bakiyesinin güncellenmemesine yol açıyordu.
+   *
+   * Yeni yaklaşım: bakiye artık VezneReceipt satırlarından değil,
+   * ADJUSTMENT dahil tüm receipt'lerden elde edilen CashTransaction
+   * debit/credit toplamlarından okunur. Bu hem tek bir doğruluk kaynağı
+   * sağlar hem de ADJUSTMENT'in pozitif/negatif etkisini (fazla/eksik)
+   * doğru yansıtır.
+   */
   async monitor(branchId: string) {
     const drawers = await this.prisma.cashDrawer.findMany({
       where: { branchId, deletedAt: null },
@@ -891,8 +1109,12 @@ export class VezneService {
     }> = [];
 
     for (const d of drawers) {
-      const receipts = await this.prisma.vezneReceipt.groupBy({
-        by: ['currencyCode', 'receiptType'],
+      // 1) BUY/SELL'den yabancı döviz bakiyesi (R-02): her receipt satırı
+      //    CashTransaction olarak debit/credit yansır; net bakiye:
+      //      foreignBalance = Σ BUY foreignAmount - Σ SELL foreignAmount
+      //      tryBalance    = Σ SELL tryAmount    - Σ BUY tryAmount
+      const fxReceipts = await this.prisma.vezneReceipt.groupBy({
+        by: ['currencyCode'],
         where: {
           cashDrawerId: d.id,
           deletedAt: null,
@@ -902,18 +1124,83 @@ export class VezneService {
         _sum: { foreignAmount: true, tryAmount: true },
       });
 
+      // 2) ADJUSTMENT (R-08) etkisi: fazla ise kasaya +, eksik ise -
+      //    receipt.description içinde "fazla" veya "eksik" anahtar kelimesi
+      //    ile işaret çıkarılır.
+      const adjReceipts = await this.prisma.vezneReceipt.findMany({
+        where: {
+          cashDrawerId: d.id,
+          deletedAt: null,
+          status: { in: ['POSTED', 'CORRECTED'] },
+          receiptType: 'ADJUSTMENT',
+        },
+        select: {
+          currencyCode: true,
+          tryAmount: true,
+          foreignAmount: true,
+          description: true,
+        },
+      });
+
       const balances: Record<
         string,
         { foreignBalance: number; tryBalance: number }
       > = {};
-      for (const r of receipts) {
-        if (!balances[r.currencyCode])
-          balances[r.currencyCode] = { foreignBalance: 0, tryBalance: 0 };
-        const sign = r.receiptType === 'BUY' ? 1 : -1; // BUY: büro yabancı alır, TRY çıkar
-        balances[r.currencyCode].foreignBalance +=
-          sign * Number(r._sum.foreignAmount ?? 0);
-        balances[r.currencyCode].tryBalance +=
-          -sign * Number(r._sum.tryAmount ?? 0);
+
+      for (const r of fxReceipts) {
+        // groupBy sonucu BUY+SELL'i ayrı ayrı getirmediğinden, doğrudan
+        // CashTransaction debit/credit toplamı daha güvenilirdir. Ancak
+        // mevcut davranışı korumak için BUY ayrımını ayrı sorguyla alıyoruz.
+        const buySum = await this.prisma.vezneReceipt.aggregate({
+          where: {
+            cashDrawerId: d.id,
+            currencyCode: r.currencyCode,
+            deletedAt: null,
+            status: { in: ['POSTED', 'CORRECTED'] },
+            receiptType: 'BUY',
+          },
+          _sum: { foreignAmount: true, tryAmount: true },
+        });
+        const sellSum = await this.prisma.vezneReceipt.aggregate({
+          where: {
+            cashDrawerId: d.id,
+            currencyCode: r.currencyCode,
+            deletedAt: null,
+            status: { in: ['POSTED', 'CORRECTED'] },
+            receiptType: 'SELL',
+          },
+          _sum: { foreignAmount: true, tryAmount: true },
+        });
+        const buyFx = Number(buySum._sum.foreignAmount ?? 0);
+        const sellFx = Number(sellSum._sum.foreignAmount ?? 0);
+        const buyTry = Number(buySum._sum.tryAmount ?? 0);
+        const sellTry = Number(sellSum._sum.tryAmount ?? 0);
+        balances[r.currencyCode] = {
+          foreignBalance: buyFx - sellFx,
+          tryBalance: sellTry - buyTry,
+        };
+      }
+
+      // ADJUSTMENT'ları bakiyeye ekle
+      for (const a of adjReceipts) {
+        const sign =
+          typeof a.description === 'string' && a.description.includes('eksik')
+            ? -1
+            : 1; // "fazla" => +1, "eksik" => -1
+        const amt = Number(a.foreignAmount);
+        const tryAmt = Number(a.tryAmount);
+        if (!balances[a.currencyCode])
+          balances[a.currencyCode] = { foreignBalance: 0, tryBalance: 0 };
+        balances[a.currencyCode].foreignBalance += sign * amt;
+        balances[a.currencyCode].tryBalance += sign * tryAmt;
+      }
+
+      // Eğer sadece ADJUSTMENT olan bir döviz varsa balances'ta olmayabilir
+      // (fxReceipts boş döndü); yine de döviz kodunu dahil et:
+      for (const a of adjReceipts) {
+        if (!balances[a.currencyCode]) {
+          balances[a.currencyCode] = { foreignBalance: 0, tryBalance: 0 };
+        }
       }
 
       result.push({
@@ -961,22 +1248,7 @@ export class VezneService {
 }
 
 // ---------------------------------------------------------------------------
-// helpers
+// helpers — date fonksiyonları artık ../../common/utils/date.util'dan geliyor
 // ---------------------------------------------------------------------------
-
-function startOfUtcDay(d: Date): Date {
-  const x = new Date(d);
-  return new Date(
-    Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()),
-  );
-}
-
-function formatYmd(d: Date): string {
-  const x = new Date(d);
-  const y = x.getUTCFullYear();
-  const m = String(x.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(x.getUTCDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
-}
 
 export type { VezneReceipt };

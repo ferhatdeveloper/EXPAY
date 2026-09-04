@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
 import { toast } from 'sonner';
+import { formatDateForBranch } from '@/lib/format';
 
 interface DayEnd {
   id: string;
@@ -30,9 +31,9 @@ export function DayEndPage() {
   });
 
   const columns: Column<DayEnd>[] = [
-    { key: 'date', header: 'Tarih', render: (d) => new Date(d.businessDate).toLocaleDateString() },
+    { key: 'date', header: 'Tarih', render: (d) => formatDateForBranch(d.businessDate, (useAuthStore.getState().user as any)?.branch?.country === 'IQ' ? 'IQ' : 'TR') },
     { key: 'status', header: 'Durum', render: (d) => <Badge variant={d.status === 'CLOSED' ? 'success' : 'warning'}>{d.status}</Badge> },
-    { key: 'closed', header: 'Kapanis', render: (d) => d.closedAt ? new Date(d.closedAt).toLocaleString() : '-' },
+    { key: 'closed', header: 'Kapanis', render: (d) => d.closedAt ? formatDateForBranch(d.closedAt, (useAuthStore.getState().user as any)?.branch?.country === 'IQ' ? 'IQ' : 'TR') : '-' },
     { key: 'notes', header: 'Notlar', render: (d) => d.notes ?? '-' },
   ];
 
