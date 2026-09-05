@@ -27,6 +27,8 @@ const PERMISSIONS = [
   { code: 'rate.old', module: 'rate' },
   { code: 'rate.closing', module: 'rate' },
   { code: 'rate.definition', module: 'rate' },
+  { code: 'rate.update', module: 'rate' },
+  { code: 'rate.view', module: 'rate' },
   // Manager
   { code: 'manager.rateFree', module: 'manager' },
   { code: 'manager.receipt', module: 'manager' },
@@ -61,6 +63,11 @@ const PERMISSIONS = [
   { code: 'customer.list', module: 'customer' },
   { code: 'customer.detail', module: 'customer' },
   { code: 'customer.balance', module: 'customer' },
+  // Emanet (Trust / Custody)
+  { code: 'customer.emanetView', module: 'customer' },
+  { code: 'customer.emanetCreate', module: 'customer' },
+  { code: 'customer.emanetRelease', module: 'customer' },
+  { code: 'customer.emanetAdjust', module: 'customer' },
   // Deviations
   { code: 'rateDeviation.monitor', module: 'rateDeviation' },
   { code: 'rateDeviation.report', module: 'rateDeviation' },
@@ -87,6 +94,14 @@ const PERMISSIONS = [
   { code: 'admin.users', module: 'admin' },
   { code: 'admin.roles', module: 'admin' },
   { code: 'admin.branches', module: 'admin' },
+  { code: 'admin.systemSettings', module: 'admin' },
+  { code: 'settings.view', module: 'settings' },
+  { code: 'settings.update', module: 'settings' },
+  // Queue (Müşteri Bilgi Ekranı + Sıra Sistemi)
+  { code: 'customerDisplay.view', module: 'queue' },
+  { code: 'queue.create', module: 'queue' },
+  { code: 'queue.call', module: 'queue' },
+  { code: 'queue.complete', module: 'queue' },
 ];
 
 const CURRENCIES: Array<{

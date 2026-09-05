@@ -46,12 +46,40 @@ model Branch {
   cashTransactions CashTransaction[]
   cashMovements CashMovement[]
   customerMovements CustomerMovement[]
+  customerEmanets  CustomerEmanet[]
   accountingVouchers AccountingVoucher[]
   exchangeRates ExchangeRate[]
   rateDeviations RateDeviationLog[]
   dayEnds DayEnd[]
   auditLogs ChangeAuditLog[]
   fiscalYear BranchFiscalYear[]
+  queueTickets QueueTicket[]
+}
+
+/// Müşteri Bilgi Ekranı (TV/Kiosk) için sıra yönetimi.
+/// Code her gün şube bazında 1'den başlar (BRANCH_PREFIX-001, -002...).
+/// status: WAITING → CALLED → COMPLETED | CANCELLED | NO_SHOW.
+model QueueTicket {
+  id           String    @id @default(uuid())
+  branchId     String    @db.VarChar(36)
+  code         String    @db.VarChar(10)
+  serviceType  String    @db.VarChar(20)
+  priority     String    @db.VarChar(10)
+  customerName String?   @db.VarChar(80)
+  phone        String?   @db.VarChar(20)
+  status       String    @db.VarChar(20) @default("WAITING")
+  counterId    String?   @db.VarChar(20)
+  calledAt     DateTime?
+  servedAt     DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, status, createdAt])
+  @@index([branchId, status, priority, createdAt])
+  @@unique([branchId, code, createdAt])
 }
 
 model Role {
@@ -112,6 +140,9 @@ model User {
   rateDeviations RateDeviationLog[]
   dayEnds        DayEnd[]
   auditLogs      ChangeAuditLog[]
+  openedEmanets  CustomerEmanet[] @relation("EmanetOpener")
+  closedEmanets  CustomerEmanet[] @relation("EmanetCloser")
+  emanetTransactions CustomerEmanetTransaction[]
 }
 
 model UserBranchAssignment {
@@ -196,6 +227,7 @@ enum RateSource {
   CLOSING
   MARKET
   MANUAL
+  BULK_ADJUST
 }
 
 model ExchangeRate {
@@ -473,6 +505,7 @@ model Customer {
   branch     Branch              @relation(fields: [branchId], references: [id])
   movements  CustomerMovement[]
   receipts   VezneReceipt[]
+  emanets    CustomerEmanet[]
 
   @@unique([branchId, code])
 }
@@ -507,6 +540,86 @@ model CustomerMovement {
   currency Currency @relation(fields: [currencyCode], references: [code])
 
   @@index([branchId, customerId, movementDate])
+}
+
+// ============== EMANET (TRUST/CUSTODY) ==============
+// Müşteri parasını/kuyumunu bizde bırakır, istediği zaman geri alır.
+// kind: CURRENCY (USD/EUR/...) veya PRECIOUS_METAL (XAU/XAG) — gram bazlı.
+// status: OPEN -> PARTIAL (kısmi iade) -> CLOSED (tamamı iade). FORFEIT = müsadere.
+
+model CustomerEmanet {
+  id             String   @id @default(uuid())
+  branchId       String   @db.VarChar(36)
+  customerId     String   @db.VarChar(36)
+  currency       String   @db.VarChar(10)
+  kind           String   @db.VarChar(20)
+  metalType      String?  @db.VarChar(20)
+  weightGrams    Decimal? @db.Decimal(18, 4)
+  purity         Decimal? @db.Decimal(8, 4)
+
+  initialAmount  Decimal  @db.Decimal(20, 4)
+  currentAmount  Decimal  @db.Decimal(20, 4)
+  unit           String   @db.VarChar(10)
+
+  entryRate      Decimal  @db.Decimal(20, 8)
+  entryTRYEquivalent    Decimal  @db.Decimal(20, 4)
+  currentTRYEquivalent  Decimal? @db.Decimal(20, 4)
+
+  storageLocation String? @db.VarChar(80)
+  vaultNumber    String?  @db.VarChar(40)
+
+  referenceNo    String   @unique @db.VarChar(40)
+  description    String?  @db.VarChar(500)
+
+  openedBy       String   @db.VarChar(36)
+  openedAt       DateTime @default(now())
+  closedAt       DateTime?
+  closedBy       String?  @db.VarChar(36)
+  closedReason   String?  @db.VarChar(120)
+
+  status         String   @db.VarChar(20)
+  expiresAt      DateTime?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  branch         Branch   @relation(fields: [branchId], references: [id])
+  customer       Customer @relation(fields: [customerId], references: [id])
+  opener         User     @relation("EmanetOpener", fields: [openedBy], references: [id])
+  closer         User?    @relation("EmanetCloser", fields: [closedBy], references: [id])
+
+  transactions   CustomerEmanetTransaction[]
+
+  @@index([branchId, status, openedAt])
+  @@index([customerId, status, openedAt])
+  @@index([referenceNo])
+  @@index([branchId, currency, status])
+}
+
+model CustomerEmanetTransaction {
+  id              String   @id @default(uuid())
+  emanetId        String   @db.VarChar(36)
+  type            String   @db.VarChar(20)
+  currency        String   @db.VarChar(10)
+  amount          Decimal  @db.Decimal(20, 4)
+
+  rateTRY         Decimal  @db.Decimal(20, 8)
+  tryEquivalent   Decimal  @db.Decimal(20, 4)
+
+  receiptId       String?  @db.VarChar(36)
+  cashAccountId   String?  @db.VarChar(36)
+  customerId      String   @db.VarChar(36)
+
+  description     String?  @db.VarChar(500)
+  createdBy       String   @db.VarChar(36)
+  createdAt       DateTime @default(now())
+
+  emanet   CustomerEmanet @relation(fields: [emanetId], references: [id], onDelete: Cascade)
+  user     User           @relation(fields: [createdBy], references: [id])
+
+  @@index([emanetId, createdAt])
+  @@index([customerId, createdAt])
 }
 
 // ============== ACCOUNTING ==============

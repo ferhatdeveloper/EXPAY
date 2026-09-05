@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../common/guards/permission.guard';
+import { BranchAccessGuard } from '../../common/guards/branch-access.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { UpsertExchangeRateSchema } from '@doviz/shared';
@@ -17,7 +18,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser } from "@doviz/shared";
 
 @Controller('exchange-rates')
-@UseGuards(JwtAuthGuard, PermissionGuard)
+@UseGuards(JwtAuthGuard, PermissionGuard, BranchAccessGuard)
 export class ExchangeRatesController {
   constructor(private readonly service: ExchangeRatesService) {}
 
@@ -121,5 +122,72 @@ export class ExchangeRatesController {
       page: page ? parseInt(page, 10) : 1,
       pageSize: pageSize ? parseInt(pageSize, 10) : 100,
     });
+  }
+
+  /**
+   * Günlük serbest piyasa kurlarını toplu yazar (varsa son 5dk içinde update,
+   * yoksa insert). enteredBy/enteredAt audit alanlarına yazılır.
+   */
+  @Post('daily-input')
+  @RequirePermission('rate.update')
+  dailyInput(
+    @Body()
+    body: {
+      branchId: string;
+      rateType: 'FREE' | 'RAW_FREE' | 'CLOSING';
+      effectiveAt?: string;
+      rates: Array<{
+        currency: string;
+        buyRate: number;
+        sellRate: number;
+        rawBuyRate?: number;
+        rawSellRate?: number;
+      }>;
+    },
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.service.dailyInput({
+      ...body,
+      effectiveAt: body.effectiveAt ? new Date(body.effectiveAt) : undefined,
+      userId: user.id,
+    });
+  }
+
+  /**
+   * Şubenin en güncel kurlarını yüzde olarak artırır/azaltır. Yeni effectiveAt
+   * ile yeni ExchangeRate satırları yazılır (geçmiş korunur).
+   */
+  @Post('bulk-adjust')
+  @RequirePermission('rate.update')
+  bulkAdjust(
+    @Body()
+    body: {
+      branchId: string;
+      rateType: 'FREE' | 'RAW_FREE';
+      percentChange: number;
+      currencies?: string[];
+    },
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.service.bulkAdjust({
+      ...body,
+      userId: user.id,
+    });
+  }
+
+  /**
+   * Daily input sayfası için: şubenin tüm aktif currency'leri için son geçerli
+   * kur + spread + effectiveAt bilgilerini tek listede döner.
+   */
+  @Get('latest-for-input/:branchId')
+  @RequirePermission('rate.view')
+  latestForInput(
+    @Param('branchId') branchId: string,
+    @Query('rateType') rateType?: 'FREE' | 'RAW_FREE',
+  ) {
+    return this.service.getLatestForInput(
+      branchId,
+      rateType ?? 'FREE',
+    );
   }
 }

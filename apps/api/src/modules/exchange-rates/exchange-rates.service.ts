@@ -459,6 +459,247 @@ export class ExchangeRatesService {
     ]);
     return { items, total, page, pageSize };
   }
+
+  // ============================================================
+  //  Günlük serbest piyasa kuru girişi (bulk upsert)
+  // ============================================================
+
+  /**
+   * Günlük kurları tek transaction içinde yazar. Son 5 dakika içinde aynı
+   * (branchId, currencyCode, rateType) için kayıt varsa update, yoksa insert.
+   * `userId` audit için enteredBy/enteredAt alanlarına yazılır.
+   */
+  async dailyInput(input: {
+    branchId: string;
+    rateType: 'FREE' | 'RAW_FREE' | 'CLOSING';
+    effectiveAt?: Date;
+    rates: Array<{
+      currency: string;
+      buyRate: number;
+      sellRate: number;
+      rawBuyRate?: number;
+      rawSellRate?: number;
+    }>;
+    userId: string;
+  }) {
+    const branchId = this.requireBranchId(input.branchId);
+    if (!input.rates || input.rates.length === 0) {
+      throw new BadRequestException('rates array is empty');
+    }
+    const effectiveAt = input.effectiveAt ?? new Date();
+    const lookbackStart = new Date(effectiveAt.getTime() - 5 * 60 * 1000);
+
+    // Tüm currency kodlarını önceden doğrula (FK hatasını erken yakala)
+    const codes = Array.from(new Set(input.rates.map((r) => r.currency)));
+    const existingCurrencies = await this.prisma.currency.findMany({
+      where: { code: { in: codes } },
+      select: { code: true },
+    });
+    const knownCodes = new Set(existingCurrencies.map((c) => c.code));
+    const unknown = codes.filter((c) => !knownCodes.has(c));
+    if (unknown.length > 0) {
+      throw new BadRequestException(
+        `Unknown currency code(s): ${unknown.join(', ')}`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const results = [];
+      for (const r of input.rates) {
+        if (!Number.isFinite(r.buyRate) || !Number.isFinite(r.sellRate)) {
+          throw new BadRequestException(
+            `Invalid rate values for ${r.currency}`,
+          );
+        }
+        const existing = await tx.exchangeRate.findFirst({
+          where: {
+            branchId,
+            currencyCode: r.currency,
+            rateType: input.rateType,
+            effectiveAt: { gte: lookbackStart },
+            deletedAt: null,
+          },
+          orderBy: { effectiveAt: 'desc' },
+        });
+
+        let record;
+        if (existing) {
+          if (existing.isLocked) {
+            throw new BadRequestException(
+              `Latest ${r.currency}/${input.rateType} rate is locked. Unlock first.`,
+            );
+          }
+          record = await tx.exchangeRate.update({
+            where: { id: existing.id },
+            data: {
+              buyRate: r.buyRate,
+              sellRate: r.sellRate,
+              rawBuyRate: r.rawBuyRate ?? null,
+              rawSellRate: r.rawSellRate ?? null,
+              source: 'MANUAL',
+              enteredBy: input.userId,
+              enteredAt: new Date(),
+              effectiveAt,
+            },
+          });
+        } else {
+          record = await tx.exchangeRate.create({
+            data: {
+              branchId,
+              currencyCode: r.currency,
+              rateType: input.rateType,
+              buyRate: r.buyRate,
+              sellRate: r.sellRate,
+              rawBuyRate: r.rawBuyRate ?? null,
+              rawSellRate: r.rawSellRate ?? null,
+              source: 'MANUAL',
+              enteredBy: input.userId,
+              enteredAt: new Date(),
+              effectiveAt,
+              isLocked: false,
+            },
+          });
+        }
+        results.push(record);
+      }
+      return { updated: results.length, items: results };
+    });
+  }
+
+  // ============================================================
+  //  Yüzde bazlı bulk güncelleme (BULK_ADJUST)
+  // ============================================================
+
+  /**
+   * Şubenin en güncel kurlarını alıp `percentChange` kadar yeni bir effectiveAt
+   * ile toplu olarak yazar. Örn +1.5 → buyRate * 1.015, -0.5 → buyRate * 0.995.
+   * Sadece FREE ve RAW_FREE için uygulanır.
+   */
+  async bulkAdjust(input: {
+    branchId: string;
+    rateType: 'FREE' | 'RAW_FREE';
+    percentChange: number;
+    currencies?: string[];
+    userId: string;
+  }) {
+    const branchId = this.requireBranchId(input.branchId);
+    if (!Number.isFinite(input.percentChange)) {
+      throw new BadRequestException('percentChange must be a number');
+    }
+    const effectiveAt = new Date();
+
+    // distinct: her currencyCode için en güncel tek satır
+    const latestRates = await this.prisma.exchangeRate.findMany({
+      where: {
+        branchId,
+        rateType: input.rateType,
+        ...(input.currencies && input.currencies.length > 0
+          ? { currencyCode: { in: input.currencies } }
+          : {}),
+        deletedAt: null,
+      },
+      orderBy: { effectiveAt: 'desc' },
+      distinct: ['currencyCode'],
+    });
+
+    if (latestRates.length === 0) {
+      return {
+        updated: 0,
+        items: [],
+        percentChange: input.percentChange,
+      };
+    }
+
+    const factor = 1 + input.percentChange / 100;
+
+    return this.prisma.$transaction(async (tx) => {
+      const results = [];
+      for (const r of latestRates) {
+        const newBuy = roundTo(Number(r.buyRate) * factor, 6);
+        const newSell = roundTo(Number(r.sellRate) * factor, 6);
+        const created = await tx.exchangeRate.create({
+          data: {
+            branchId,
+            currencyCode: r.currencyCode,
+            rateType: input.rateType,
+            buyRate: newBuy,
+            sellRate: newSell,
+            rawBuyRate: r.rawBuyRate
+              ? roundTo(Number(r.rawBuyRate) * factor, 6)
+              : null,
+            rawSellRate: r.rawSellRate
+              ? roundTo(Number(r.rawSellRate) * factor, 6)
+              : null,
+            source: 'BULK_ADJUST',
+            enteredBy: input.userId,
+            enteredAt: new Date(),
+            effectiveAt,
+            isLocked: false,
+            note: `Bulk adjust %${input.percentChange}`,
+          },
+        });
+        results.push(created);
+      }
+      return {
+        updated: results.length,
+        items: results,
+        percentChange: input.percentChange,
+      };
+    });
+  }
+
+  // ============================================================
+  //  Daily input için güncel kurları getir
+  // ============================================================
+
+  /**
+   * Şubenin tüm aktif currency'leri için son geçerli kuru (effectiveAt
+   * bilgisiyle birlikte) getirir. UI daily-input sayfası tarafından tüketilir.
+   */
+  async getLatestForInput(
+    branchId: string,
+    rateType: 'FREE' | 'RAW_FREE' = 'FREE',
+  ) {
+    const branchIdSafe = this.requireBranchId(branchId);
+
+    const currencies = await this.prisma.currency.findMany({
+      where: { active: true, code: { not: 'TRY' } },
+      orderBy: { code: 'asc' },
+    });
+
+    const result = [];
+    for (const ccy of currencies) {
+      const latest = await this.prisma.exchangeRate.findFirst({
+        where: {
+          branchId: branchIdSafe,
+          currencyCode: ccy.code,
+          rateType,
+          deletedAt: null,
+        },
+        orderBy: { effectiveAt: 'desc' },
+      });
+      const effectiveAt = latest?.effectiveAt ?? null;
+      const lastUpdateHoursAgo = effectiveAt
+        ? Math.floor(
+            (Date.now() - new Date(effectiveAt).getTime()) / (1000 * 60 * 60),
+          )
+        : null;
+      result.push({
+        currency: ccy.code,
+        name: ccy.name,
+        symbol: ccy.symbol,
+        decimalDigits: ccy.decimalDigits,
+        buySpread: Number(ccy.buySpread),
+        sellSpread: Number(ccy.sellSpread),
+        buyRate: latest ? Number(latest.buyRate) : null,
+        sellRate: latest ? Number(latest.sellRate) : null,
+        effectiveAt,
+        lastUpdateHoursAgo,
+      });
+    }
+
+    return result;
+  }
 }
 
 // ---------------------------------------------------------------------------

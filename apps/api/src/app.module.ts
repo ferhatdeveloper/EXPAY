@@ -17,6 +17,10 @@ import { CustomerModule } from './modules/customer/customer.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { TechnicalModule } from './modules/technical/technical.module';
+import { SettingsModule } from './modules/settings/settings.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { QueueModule } from './modules/queue/queue.module';
+import { EmanetModule } from './modules/emanet/emanet.module';
 
 @Module({
   imports: [
@@ -45,6 +49,10 @@ import { TechnicalModule } from './modules/technical/technical.module';
     AccountingModule,
     ReportsModule,
     TechnicalModule,
+    SettingsModule,
+    DashboardModule,
+    QueueModule,
+    EmanetModule,
   ],
 })
 export class AppModule implements NestModule {
